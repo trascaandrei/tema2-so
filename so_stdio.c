@@ -174,6 +174,7 @@ int so_fseek(SO_FILE *stream, long offset, int whence)
 		return -1;
 	}
 
+
 	return 0;
 }
 
