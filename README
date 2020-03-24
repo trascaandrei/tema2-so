@@ -1,0 +1,33 @@
+### Trasca Andrei-Catalin 335CA - Tema 2 ###
+
+Organizare
+    Tema este implementata in totalitate in fisierul "so_stdio.c".
+    S-au urmat instructiunile oferite in cadrul enuntului temei, cat
+    si descrierile functiilor originale din biblioteca "stdio.h".
+
+    Implementarea este eficienta, folosind un singur buffer atat
+    pentru scriere, cat si pentru citire.
+
+    Mi-a placut tema si mi s-a parut util sa vedem cum functioneaza
+    in spate biblioteca stdio.
+
+Implementare
+    Tema nu este implementata complet, anumite cazuri nefiind tratate.
+    Acest lucru se reflecta in teste. Nu stiu care sunt cazurile pe
+    care nu am reusit sa le ating, de asta am ales sa trimit tema
+    fara punctajul maxim.
+
+    Ignorand aceaste exceptii, nu am intampinat dificultati in
+    implementarea temei.
+
+Cum se compilează și cum se rulează?
+    Pentru a putea fi folosita, este necesara adaugarea "-lso_stdio" 
+    la compilarea programului main, precum si rularea comenzii:
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:.
+    Pentru compilarea bibliotecii dinamice se foloseste:
+    	Linux: make build
+    Pentru rulare se foloseste pe ambele sisteme de operare:
+    	./nume_program
+
+Bibliografie
+    Definitiile functiilor originale din biblioteca "stdio.h".
