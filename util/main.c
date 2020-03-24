@@ -1,9 +1,27 @@
+// #include "util/so_stdio.h"
+// #include <stdio.h>
+
+// int main() {
+//     // SO_FILE *file = so_fopen("here", "a+");
+//     // char buff[100];
+//     // so_fseek(file, 0, SEEK_SET);
+//     // so_fread(buff, 1, 1, file);
+//     // so_fseek(file, 0, SEEK_SET);
+//     // so_fputc('c', file);
+//     // so_fclose(file);
+//     // printf("%s", buff);
+//     SO_FILE *file = so_popen("ls", "r");
+//     so_pclose(file);
+//     return 0;
+// }
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
-#include "so_stdio.h"
-#include "test_util.h"
+#include "util/so_stdio.h"
+#include "util/test_util.h"
 
 #include "hooks.h"
 
@@ -18,7 +36,7 @@ struct func_hook hooks[] = {
 
 
 //this will declare buf[] and buf_len
-#include "huge_file.h"
+#include "large_file.h"
 
 
 ssize_t hook_read(int fd, void *buf, size_t len)
@@ -34,18 +52,18 @@ ssize_t hook_read(int fd, void *buf, size_t len)
 }
 
 
+#define DEFAULT_BUFSIZE 4096
+
 int main(int argc, char *argv[])
 {
 	SO_FILE *f;
-	char *tmp;
+	unsigned char *tmp;
 	int ret;
 	char *test_work_dir;
 	char fpath[256];
+	char cmd[128];
+	int chunk_size = 200;
 	int total;
-	int chunk_size = 2000;
-	int to_read;
-	int size_member;
-	int total_members;
 
 	tmp = malloc(buf_len);
 	FAIL_IF(!tmp, "malloc failed\n");
@@ -57,47 +75,34 @@ int main(int argc, char *argv[])
 	else
 		test_work_dir = "_test";
 
-	if (argc == 3)
-		size_member = atoi(argv[2]);
-	else
-		size_member = 1;
-
-	sprintf(fpath, "%s/huge_file", test_work_dir);
+	sprintf(fpath, "%s/large_file", test_work_dir);
 
 	ret = create_file_with_contents(fpath, buf, buf_len);
 	FAIL_IF(ret != 0, "Couldn't create file: %s\n", fpath);
 
 
+
 	/* --- BEGIN TEST --- */
-	f = so_fopen(fpath, "r");
-	FAIL_IF(!f, "Couldn't open file: %s\n", fpath);
+	sprintf(cmd, "cat %s", fpath);
+
+	f = so_popen(cmd, "r");
+	FAIL_IF(!f, "popen failed\n");
 
 	target_fd = so_fileno(f);
 
 	num_sys_read = 0;
 
-	// read the rest of the file in chunks
 	total = 0;
-	while (total < buf_len) {
-		if (total + chunk_size >= buf_len)
-			to_read = buf_len - total;
-		else
-			to_read = chunk_size;
+	while (!so_feof(f)) {
+		ret = so_fread(&tmp[total], 1, chunk_size, f);
 
-		total_members = to_read / size_member;
-		ret = so_fread(&tmp[total], size_member, total_members, f);
-
-		FAIL_IF(ret != total_members, "Incorrect return value for so_fread: got %d, expected %d\n", ret, total_members);
-
-		total += total_members * size_member;
+		total += ret;
 	}
-
-	FAIL_IF(num_sys_read != 49, "Incorrect number of reads: got %d, expected %d\n", num_sys_read, 49);
 
 	FAIL_IF(memcmp(tmp, buf, buf_len), "Incorrect data\n");
 
-	ret = so_fclose(f);
-	FAIL_IF(ret != 0, "Incorrect return value for so_fclose: got %d, expected %d\n", ret, 0);
+	ret = so_pclose(f);
+	FAIL_IF(ret != 0, "Incorrect return value for so_pclose: got %d, expected %d\n", ret, 0);
 
 	free(tmp);
 

@@ -4,6 +4,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/param.h>
+#include <sys/wait.h>
+#include <paths.h>
 
 #include <stdio.h>
 
@@ -12,11 +15,13 @@
 struct _so_file {
 	int fd;
 	long pos;
+	int buf_size;
 	int errors;
 	int eof;
 	unsigned char buff[BUFF_SIZE];
 	int buf_pos;
 	int last_op;
+	int mode;
 };
 
 SO_FILE *so_fopen(const char *pathname, const char *mode)
@@ -29,23 +34,35 @@ SO_FILE *so_fopen(const char *pathname, const char *mode)
 
 	file->pos = 0;
 	file->errors = 0;
+	file->buf_size = 0;
 	file->eof = 0;
 	file->buf_pos = 0;
 	file->last_op = -1;
+	file->mode = -1;
 	memset(file->buff, 0, BUFF_SIZE);
+
+	if (strcmp(pathname, "") == 0) {
+		return file;
+	}
 
 	if (strcmp(mode, "r") == 0) {
 		file->fd = open(pathname, O_RDONLY);
+		file->mode = -1;
 	} else if (strcmp(mode, "r+") == 0) {
 		file->fd = open(pathname, O_RDWR);
+		file->mode = 0;
 	} else if (strcmp(mode, "w") == 0) {
 		file->fd = open(pathname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		file->mode = 0;
 	} else if (strcmp(mode, "w+") == 0) {
 		file->fd = open(pathname, O_RDWR | O_CREAT | O_TRUNC, 0644);
+		file->mode = 0;
 	} else if (strcmp(mode, "a") == 0) {
 		file->fd = open(pathname, O_WRONLY | O_APPEND | O_CREAT, 0644);
+		file->mode = 1;
 	} else if (strcmp(mode, "a+") == 0) {
 		file->fd = open(pathname, O_RDWR | O_APPEND | O_CREAT, 0644);
+		file->mode = 1;
 	} else {
 		free(file);
 		return NULL;
@@ -62,16 +79,18 @@ SO_FILE *so_fopen(const char *pathname, const char *mode)
 int so_fclose(SO_FILE *stream)
 {
 	if (stream == NULL) {
-		return 0;
-	}
-
-	so_fflush(stream);
-
-	if (close(stream->fd) < 0) {
 		return SO_EOF;
 	}
+
+	int ret = so_fflush(stream);
+	printf("%d", ret);
+
+	if (close(stream->fd) != 0) {
+		ret = SO_EOF;
+	}
 	free(stream);
-	return 0;
+
+	return ret;
 }
 
 int so_fileno(SO_FILE *stream)
@@ -91,8 +110,11 @@ int so_ferror(SO_FILE *stream)
 
 int fill_buffer(SO_FILE *stream)
 {
-	if (read(stream->fd, stream->buff, BUFF_SIZE) == 0)
-		return EOF;
+	stream->buf_size = read(stream->fd, stream->buff, BUFF_SIZE);
+	if (stream->buf_size == 0) {
+		stream->eof = 1;
+		return SO_EOF;
+	}
 
 	stream->buf_pos = 0;
 
@@ -101,9 +123,9 @@ int fill_buffer(SO_FILE *stream)
 
 int so_fgetc(SO_FILE *stream)
 {	
-	if (stream->buf_pos == BUFF_SIZE || stream->last_op == -1)
-		if (fill_buffer(stream) == EOF)
-			return EOF;
+	if ((stream->buf_pos == stream->buf_size && stream->last_op == 0) || stream->last_op != 0)
+		if (fill_buffer(stream) == SO_EOF)
+			return SO_EOF;
 
 	stream->last_op = 0;
 
@@ -114,11 +136,9 @@ int so_fgetc(SO_FILE *stream)
 
 int so_fputc(int c, SO_FILE *stream)
 {
-	if (stream->buf_pos == BUFF_SIZE && stream->last_op != -1)
-		so_fflush(stream);
-
-	if (stream->last_op == -1)
-		stream->buf_pos = 0;
+	if (stream->buf_pos == BUFF_SIZE && stream->last_op == 1)
+		if (so_fflush(stream) == -1)
+			return SO_EOF;
 
 	stream->last_op = 1;
 
@@ -135,14 +155,15 @@ size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
 	unsigned char *p = ptr;
 
 	for (i = 0; i < size * nmemb; i++) {
-		*p = so_fgetc(stream);
+		int res = so_fgetc(stream);
 
-		if (*p == EOF) {
+		if (res == SO_EOF) {
 			if (i == 0)
 				return 0;
 			else
 				break;
-		}
+		} else
+			*p = res;
 
 		p++;
 	}
@@ -168,6 +189,9 @@ int so_fseek(SO_FILE *stream, long offset, int whence)
 	if (stream->last_op == 1)
 		so_fflush(stream);
 
+	if (stream->last_op == 0)
+	 	stream->buf_pos = BUFF_SIZE;
+
 	stream->pos = lseek(stream->fd, offset, whence);
 
 	if (stream->pos == -1) {
@@ -188,19 +212,108 @@ long so_ftell(SO_FILE *stream)
 
 int so_fflush(SO_FILE *stream)
 {
-	write(stream->fd, stream->buff, stream->buf_pos);
+	if (stream->mode == -1) {
+		return 0;
+	}
+
+	if (stream->mode == 1)
+		stream->pos = lseek(stream->fd, 0, SEEK_END);
+
+	int ret = write(stream->fd, stream->buff, stream->buf_pos);
 	memset(stream->buff, 0, BUFF_SIZE);
 	stream->buf_pos = 0;
+
+	if (ret == -1) {
+		stream->errors = 1;
+		return SO_EOF;
+	}
 
 	return 0;
 }
 
+static struct pid {
+	SO_FILE *fp;
+	pid_t pid;
+} *cur;
+
 SO_FILE *so_popen(const char *command, const char *type)
 {
+	SO_FILE *stream;
+	int pdes[2];
+	pid_t pid;
+	char *argp[] = {"sh", "-c", NULL, NULL};
 
+	cur = malloc(sizeof(struct pid));
+	
+	if (cur == NULL)
+		return NULL;
+	if (pipe(pdes) < 0) {
+		free(cur);
+		return NULL;
+	}
+
+	pid = fork();
+
+	if (pid < 0) {
+		free(cur);
+		return NULL;
+	}
+
+	if (pid == 0) {
+		if (*type == 'r') {
+			close(pdes[0]);
+			if (pdes[1] != STDOUT_FILENO) {
+				dup2(pdes[1], STDOUT_FILENO);
+				close(pdes[1]);
+			}
+		} else {
+			close(pdes[1]);
+			if (pdes[0] != STDIN_FILENO) {
+				dup2(pdes[0], STDIN_FILENO);
+				close(pdes[0]);
+			}
+		}
+		argp[2] = (char *)command;
+		execv(_PATH_BSHELL, argp);
+	}
+
+	if (*type == 'r') {
+		stream = so_fopen("", type);
+		stream->fd = pdes[0];
+		close(pdes[1]);
+	} else {
+		stream = so_fopen("", type);
+		stream->fd = pdes[1];
+		close(pdes[0]);
+	}
+
+	cur->fp = stream;
+	cur->pid =  pid;
+	return stream;
 }
 
 int so_pclose(SO_FILE *stream)
 {
+	int pstat;
+	int count = 0;
+	pid_t pid;
 
+	if (cur == NULL)
+		return -1;
+	so_fclose(stream);
+
+	do {
+		pid = waitpid(cur->pid, &pstat, 0);
+		count++;
+		if (count > 999999) {
+			break;
+		}
+	} while (pid == -1);
+
+	free(cur);
+
+	if (pid == -1)
+		return pid;
+	else
+		return pstat;
 }

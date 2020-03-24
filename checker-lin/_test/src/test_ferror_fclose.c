@@ -1,12 +1,34 @@
 #include <stdio.h>
 
-#include "util/so_stdio.h"
-#include "util/test_util.h"
+#include "so_stdio.h"
+#include "test_util.h"
+
+#include "hooks.h"
 
 int target_fd;
 
+int hook_close(int fd);
+
+struct func_hook hooks[] = {
+	[0] = { .name = "close", .addr = (unsigned long)hook_close, .orig_addr = 0 },
+};
+
+
 //this will declare buf[] and buf_len
-#include "util/huge_file.h"
+#include "huge_file.h"
+
+
+int hook_close(int fd)
+{
+	int (*orig_close)(int);
+
+	orig_close = (int (*)(int))hooks[0].orig_addr;
+
+	if (fd == target_fd)
+		return -1;
+
+	return orig_close(fd);
+}
 
 
 int main(int argc, char *argv[])
@@ -15,6 +37,8 @@ int main(int argc, char *argv[])
 	int ret;
 	char *test_work_dir;
 	char fpath[256];
+
+	install_hooks("libso_stdio.so", hooks, 1);
 
 	if (argc == 2)
 		test_work_dir = argv[1];

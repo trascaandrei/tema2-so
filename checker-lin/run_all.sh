@@ -1,7 +1,7 @@
 #!/bin/bash
 
 first_test=0
-last_test=33
+last_test=43
 script=run_test.sh
 
 # Call init to set up testing environment
@@ -25,5 +25,5 @@ END {
 }'
 
 # Cleanup testing environment
-bash ./_test/"$script" cleanup
-rm -f results.txt
+#bash ./_test/"$script" cleanup
+#rm -f results.txt
